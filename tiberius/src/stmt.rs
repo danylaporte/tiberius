@@ -1,14 +1,14 @@
 //! Prepared statements
+use futures::sync::oneshot;
+use futures::{Async, Future, Poll, Sink, Stream};
+use futures_state_stream::{StateStream, StreamEvent};
+use query::{ExecFuture, QueryStream};
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::sync::Arc;
-use futures::{Async, Future, Poll, Sink, Stream};
-use futures::sync::oneshot;
-use futures_state_stream::{StateStream, StreamEvent};
-use query::{ExecFuture, QueryStream};
 use tokens::{DoneStatus, TdsResponseToken, TokenColMetaData};
 use types::{ColumnData, ToSql};
-use {BoxableIo, SqlConnection, StmtResult, Error};
+use {BoxableIo, Error, SqlConnection, StmtResult};
 
 /// A prepared statement which is prepared on the first execution
 /// (which is a technical requirement since you need to know the types)
@@ -78,7 +78,7 @@ impl<I: BoxableIo, R: StmtResult<I>> StmtStream<I, R> {
         conn: SqlConnection<I>,
         stmt: Statement,
         meta: Option<Arc<TokenColMetaData>>,
-        params: &[&ToSql],
+        params: &[&dyn ToSql],
     ) -> Self {
         let signature = params.iter().map(|x| x.to_sql()).collect();
         StmtStream {
@@ -113,31 +113,29 @@ impl<I: BoxableIo, R: StmtResult<I>> StateStream for StmtStream<I, R> {
 
         // attempt to receive the connection back to continue receiving further resultsets
         if self.receiver.is_some() {
-            self.conn = Some(try_ready!(
-                self.receiver
-                    .as_mut()
-                    .unwrap()
-                    .poll()
-                    .map_err(|_| Error::Canceled)
-            ));
+            self.conn = Some(try_ready!(self
+                .receiver
+                .as_mut()
+                .unwrap()
+                .poll()
+                .map_err(|_| Error::Canceled)));
             self.receiver = None;
         }
 
-        try_ready!(
-            self.conn
-                .as_mut()
-                .map(|x| x.0.transport.inner.poll_complete())
-                .unwrap()
-        );
+        try_ready!(self
+            .conn
+            .as_mut()
+            .map(|x| x.0.transport.inner.poll_complete())
+            .unwrap());
 
         // receive and handle the result of sp_prepare
         while !self.done {
-            let token = try_ready!(
-                self.conn
-                    .as_mut()
-                    .map(|x| x.0.transport.next_token())
-                    .unwrap()
-            ).expect("StateStream: expected token");
+            let token = try_ready!(self
+                .conn
+                .as_mut()
+                .map(|x| x.0.transport.next_token())
+                .unwrap())
+            .expect("StateStream: expected token");
             let (do_ret, reinject) = match token {
                 TdsResponseToken::ColMetaData(ref meta) => {
                     if !meta.columns.is_empty() {
@@ -175,7 +173,8 @@ impl<I: BoxableIo, R: StmtResult<I>> StateStream for StmtStream<I, R> {
                     let signature = self.param_sig.take().unwrap();
 
                     if let Some(ref mut conn) = self.conn {
-                        let target = conn.0
+                        let target = conn
+                            .0
                             .stmts
                             .entry((&*self.stmt.sql).to_owned())
                             .or_insert(Vec::with_capacity(1));
@@ -194,9 +193,9 @@ impl<I: BoxableIo, R: StmtResult<I>> StateStream for StmtStream<I, R> {
                 }
                 let (sender, receiver) = oneshot::channel();
                 self.receiver = Some(receiver);
-                return Ok(Async::Ready(
-                    StreamEvent::Next(R::from_connection(conn, sender)),
-                ));
+                return Ok(Async::Ready(StreamEvent::Next(R::from_connection(
+                    conn, sender,
+                ))));
             }
         }
 
@@ -209,14 +208,19 @@ impl<I: BoxableIo, R: StmtResult<I>> StateStream for StmtStream<I, R> {
 /// A single resultset yielding the status of query execution
 /// (currently the amount of affected rows)
 #[must_use = "futures do nothing unless polled"]
-pub struct ExecResult<S: StateStream> where S::Item: Future {
+pub struct ExecResult<S: StateStream>
+where
+    S::Item: Future,
+{
     stream: S,
     idx: usize,
     resultset: Option<S::Item>,
     result: Option<<S::Item as Future>::Item>,
 }
 
-impl<S: StateStream> ExecResult<S> where S::Item: Future
+impl<S: StateStream> ExecResult<S>
+where
+    S::Item: Future,
 {
     pub fn new(stream: S) -> ExecResult<S> {
         ExecResult {
@@ -251,7 +255,8 @@ where
             self.resultset = match try_ready!(self.stream.poll()) {
                 StreamEvent::Next(resultset) => Some(resultset),
                 StreamEvent::Done(conn) => {
-                    let result = self.result
+                    let result = self
+                        .result
                         .take()
                         .expect("ExecResult expected 1 resultset, got none");
                     return Ok(Async::Ready((result, conn)));
@@ -273,8 +278,7 @@ pub struct QueryResult<S: StateStream> {
     resultset: Option<S::Item>,
 }
 
-impl<S: StateStream> QueryResult<S>
-{
+impl<S: StateStream> QueryResult<S> {
     pub fn new(stream: S) -> QueryResult<S> {
         QueryResult {
             stream,
@@ -289,8 +293,8 @@ impl<S: StateStream> QueryResult<S>
     }
 }
 
-impl<I, S> StateStream for QueryResult<S> 
-where 
+impl<I, S> StateStream for QueryResult<S>
+where
     I: BoxableIo,
     S: StateStream<Item = QueryStream<I>, Error = <QueryStream<I> as Stream>::Error>,
 {
@@ -305,7 +309,7 @@ where
                     return Ok(Async::Ready(StreamEvent::Next(result)));
                 }
             }
-            
+
             // ensure we do not poll the same resultset again
             self.resultset = None;
             self.resultset = match try_ready!(self.stream.poll()) {

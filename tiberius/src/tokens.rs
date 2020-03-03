@@ -1,13 +1,13 @@
+use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
+use bytes::Bytes;
+use futures::{Async, Poll};
+use protocol::{self, FeatureLevel, PacketHeader, PacketStatus, PacketType, PacketWriter};
 ///! token stream definitions
 use std::borrow::Cow;
 use std::sync::Arc;
-use bytes::Bytes;
-use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
-use futures::{Async, Poll};
 use transport::{Io, NoLength, PrimitiveWrites, ReadState, Str, TdsTransport};
 use types::{ColumnData, TypeInfo};
-use protocol::{self, FeatureLevel, PacketHeader, PacketStatus, PacketType, PacketWriter};
-use {FromUint, Error, Result};
+use {Error, FromUint, Result};
 
 /// read a token from an underlying transport
 pub trait ParseToken<I: Io> {
@@ -56,11 +56,7 @@ pub enum TdsResponseToken {
 
 impl<I: Io> TdsTransport<I> {
     #[inline]
-    pub fn parse_token(
-        &mut self,
-        token: Tokens,
-        min_len: usize,
-    ) -> Poll<TdsResponseToken, Error> {
+    pub fn parse_token(&mut self, token: Tokens, min_len: usize) -> Poll<TdsResponseToken, Error> {
         match token {
             Tokens::SSPI => {
                 if let Some(bytes) = self.inner.read_bytes(min_len) {
@@ -153,8 +149,8 @@ impl<I: Io> ParseToken<I> for TokenEnvChange {
                 assert_eq!(old_value, 0);
                 TokenEnvChange::BeginTransaction(new_value)
             }
-            Some(ty @ EnvChangeTy::RollbackTransaction) |
-            Some(ty @ EnvChangeTy::CommitTransaction) => {
+            Some(ty @ EnvChangeTy::RollbackTransaction)
+            | Some(ty @ EnvChangeTy::CommitTransaction) => {
                 let new_value = trans.inner.read_u8()?;
                 assert_eq!(new_value, 0);
                 assert_eq!(trans.inner.read_u8()?, 8);
@@ -407,7 +403,8 @@ impl<I: Io> ParseToken<I> for TokenRow {
                 .row_bitmap
                 .as_ref()
                 .map(|bm| bm.as_ref()[index] & (1 << bit))
-                .unwrap_or(0) > 0
+                .unwrap_or(0)
+                > 0
             {
                 column_data.push(ColumnData::None);
                 trans.commit_read_state(None);
@@ -428,9 +425,8 @@ impl<I: Io> ParseToken<I> for TokenRow {
                     };
                     trans.read_state = Some(ReadState::Row(row_tok, column_data, col_state));
                     // this closure cannot be executed here since Async::Ready is handled above, only used for type conversion
-                    return ret.map(|async| {
-                        async.map(|_| ((None as Option<TdsResponseToken>).unwrap()))
-                    });
+                    return ret
+                        .map(|async| async.map(|_| ((None as Option<TdsResponseToken>).unwrap())));
                 }
             }
         }

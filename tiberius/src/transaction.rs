@@ -1,10 +1,10 @@
-use std::borrow::Cow;
 use futures::{Async, Future, Poll};
 use futures_state_stream::{StateStream, StreamEvent};
 use query::{ExecFuture, QueryStream, ResultSetStream};
+use std::borrow::Cow;
 use stmt::{ExecResult, QueryResult, Statement, StmtStream};
 use types::ToSql;
-use {BoxableIo, SqlConnection, Error};
+use {BoxableIo, Error, SqlConnection};
 
 /// A transaction
 pub struct Transaction<I: BoxableIo>(SqlConnection<I>);
@@ -28,7 +28,7 @@ impl<F: Future> TransactionFuture<F> {
 impl<I, T, F> Future for TransactionFuture<F>
 where
     I: BoxableIo,
-    F: Future<Item = (T, SqlConnection<I>)>
+    F: Future<Item = (T, SqlConnection<I>)>,
 {
     type Item = (T, Transaction<I>);
     type Error = F::Error;
@@ -73,25 +73,39 @@ impl<I: BoxableIo, S: StateStream<State = SqlConnection<I>>> StateStream for Tra
 }
 
 impl<I: BoxableIo + 'static> Transaction<I> {
-    pub fn simple_exec<'a, Q>(self, query: Q) -> TransactionFuture<ExecResult<ResultSetStream<I, ExecFuture<I>>>>
+    pub fn simple_exec<'a, Q>(
+        self,
+        query: Q,
+    ) -> TransactionFuture<ExecResult<ResultSetStream<I, ExecFuture<I>>>>
     where
         Q: Into<Cow<'a, str>>,
     {
         TransactionFuture::new(self.0.simple_exec(query))
     }
 
-    pub fn simple_query<'a, Q>(self, query: Q) -> TransactionStream<QueryResult<ResultSetStream<I, QueryStream<I>>>>
+    pub fn simple_query<'a, Q>(
+        self,
+        query: Q,
+    ) -> TransactionStream<QueryResult<ResultSetStream<I, QueryStream<I>>>>
     where
         Q: Into<Cow<'a, str>>,
     {
         TransactionStream::new(self.0.simple_query(query))
     }
 
-    pub fn exec<S: Into<Statement>>(self, stmt: S, params: &[&ToSql]) -> TransactionFuture<ExecResult<StmtStream<I, ExecFuture<I>>>> {
+    pub fn exec<S: Into<Statement>>(
+        self,
+        stmt: S,
+        params: &[&dyn ToSql],
+    ) -> TransactionFuture<ExecResult<StmtStream<I, ExecFuture<I>>>> {
         TransactionFuture::new(self.0.exec(stmt, params))
     }
 
-    pub fn query<S: Into<Statement>>(self, stmt: S, params: &[&ToSql]) -> TransactionStream<QueryResult<StmtStream<I, QueryStream<I>>>> {
+    pub fn query<S: Into<Statement>>(
+        self,
+        stmt: S,
+        params: &[&dyn ToSql],
+    ) -> TransactionStream<QueryResult<StmtStream<I, QueryStream<I>>>> {
         TransactionStream::new(self.0.query(stmt, params))
     }
 
@@ -103,7 +117,7 @@ impl<I: BoxableIo + 'static> Transaction<I> {
     }
 
     /// Commits a transaction
-    pub fn commit(self) -> Box<Future<Item = SqlConnection<I>, Error = Error>> {
+    pub fn commit(self) -> Box<dyn Future<Item = SqlConnection<I>, Error = Error>> {
         Box::new(
             self.internal_exec("COMMIT TRAN")
                 .and_then(|trans| trans.finish()),
@@ -111,7 +125,7 @@ impl<I: BoxableIo + 'static> Transaction<I> {
     }
 
     /// Rollback a transaction
-    pub fn rollback(self) -> Box<Future<Item = SqlConnection<I>, Error = Error>> {
+    pub fn rollback(self) -> Box<dyn Future<Item = SqlConnection<I>, Error = Error>> {
         Box::new(
             self.internal_exec("ROLLBACK TRAN")
                 .and_then(|trans| trans.finish()),
@@ -119,7 +133,7 @@ impl<I: BoxableIo + 'static> Transaction<I> {
     }
 
     /// convert back to a normal connection (enable auto commit)
-    fn finish(self) -> Box<Future<Item = SqlConnection<I>, Error = Error>> {
+    fn finish(self) -> Box<dyn Future<Item = SqlConnection<I>, Error = Error>> {
         Box::new(
             self.internal_exec("set implicit_transactions off")
                 .and_then(|trans| Ok(trans.0)),
@@ -127,7 +141,7 @@ impl<I: BoxableIo + 'static> Transaction<I> {
     }
 
     /// executes an internal statement and checks if it succeeded
-    fn internal_exec(self, sql: &str) -> Box<Future<Item = Transaction<I>, Error = Error>> {
+    fn internal_exec(self, sql: &str) -> Box<dyn Future<Item = Transaction<I>, Error = Error>> {
         Box::new(self.simple_exec(sql).and_then(|(result, trans)| {
             assert_eq!(result, 0);
             Ok(trans)

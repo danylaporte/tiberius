@@ -1,7 +1,7 @@
+use super::{ColumnData, FromColumnData, ToColumnData, ToSql};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 ///! time type implementations
 use std::io::{Read, Write};
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use super::{ColumnData, FromColumnData, ToColumnData, ToSql};
 use {Error, Result};
 
 /// prepares a statement which selects a passed value
@@ -98,9 +98,9 @@ impl Time {
     #[inline]
     pub fn len(&self) -> Result<u8> {
         Ok(match self.scale {
-            0...2 => 3,
-            3...4 => 4,
-            5...7 => 5,
+            0..=2 => 3,
+            3..=4 => 4,
+            5..=7 => 5,
             _ => {
                 return Err(Error::Protocol(
                     format!("timen: invalid scale {}", self.scale).into(),
@@ -132,9 +132,9 @@ impl Time {
 
     pub fn decode<R: Read>(mut rd: R, n: usize, len: u8) -> Result<Time> {
         let val = match (n, len) {
-            (0...2, 3) => rd.read_u16::<LittleEndian>()? as u64 | (rd.read_u8()? as u64) << 16,
-            (3...4, 4) => rd.read_u32::<LittleEndian>()? as u64,
-            (5...7, 5) => rd.read_u32::<LittleEndian>()? as u64 | (rd.read_u8()? as u64) << 32,
+            (0..=2, 3) => rd.read_u16::<LittleEndian>()? as u64 | (rd.read_u8()? as u64) << 16,
+            (3..=4, 4) => rd.read_u32::<LittleEndian>()? as u64,
+            (5..=7, 5) => rd.read_u32::<LittleEndian>()? as u64 | (rd.read_u8()? as u64) << 32,
             _ => {
                 return Err(Error::Protocol(
                     format!("timen: invalid length {}", n).into(),
@@ -180,8 +180,8 @@ mod chrono {
     extern crate chrono;
 
     use self::chrono::{Duration, NaiveDate, NaiveDateTime, NaiveTime};
-    use types::{ColumnData, FromColumnData, ToColumnData, ToSql};
     use super::{Date, DateTime2, Time};
+    use types::{ColumnData, FromColumnData, ToColumnData, ToSql};
     use {Error, Result};
 
     #[inline]
@@ -205,13 +205,15 @@ mod chrono {
             .num_days()
     }
 
-    /// relevant for encoding to datetime1
-    #[inline]
-    fn to_sec_fragments(time: &NaiveTime) -> i64 {
-        time.signed_duration_since(NaiveTime::from_hms(0, 0, 0))
-            .num_nanoseconds()
-            .unwrap() * 300 / (1e9 as i64)
-    }
+    // /// relevant for encoding to datetime1
+    // #[inline]
+    // fn to_sec_fragments(time: &NaiveTime) -> i64 {
+    //     time.signed_duration_since(NaiveTime::from_hms(0, 0, 0))
+    //         .num_nanoseconds()
+    //         .unwrap()
+    //         * 300
+    //         / (1e9 as i64)
+    // }
 
     from_column_data!(
         NaiveDateTime:
@@ -237,7 +239,7 @@ mod chrono {
             let time = self_.time();
             let nanos = time.num_seconds_from_midnight() as u64 * 1e9 as u64 + time.nanosecond() as u64;
             // TODO: also use datetime here for TDS<7.3
-            ColumnData::DateTime2(DateTime2(Date::new(to_days(&date, 1) as u32), Time { 
+            ColumnData::DateTime2(DateTime2(Date::new(to_days(&date, 1) as u32), Time {
                 increments: nanos / 100,
                 scale: 7,
             }))
@@ -252,11 +254,11 @@ mod chrono {
 
     #[cfg(test)]
     mod tests {
+        use super::chrono::{NaiveDate, NaiveDateTime};
         use futures::Future;
         use futures_state_stream::StateStream;
-        use tokio::executor::current_thread;
         use tests::connection_string;
-        use super::chrono::{NaiveDate, NaiveDateTime};
+        use tokio::executor::current_thread;
         use SqlConnection;
 
         static DATETIME_TEST_STR: &'static str = "2015-09-05 23:56:04.0100020";
@@ -295,22 +297,20 @@ mod chrono {
 
         #[test]
         fn test_datetime2_to_naive_datetime() {
-            let future = SqlConnection::connect(connection_string().as_ref())
-                .and_then(|conn| {
-                    conn.simple_query(format!(
-                        "select cast('{}' as datetime2(7))",
-                        DATETIME_TEST_STR
-                    )).for_each(|row| {
-                            assert_eq!(
-                                row.get::<_, NaiveDateTime>(0),
-                                NaiveDateTime::parse_from_str(
-                                    DATETIME_TEST_STR,
-                                    "%Y-%m-%d %H:%M:%S%.3f"
-                                ).unwrap()
-                            );
-                            Ok(())
-                        })
-                });
+            let future = SqlConnection::connect(connection_string().as_ref()).and_then(|conn| {
+                conn.simple_query(format!(
+                    "select cast('{}' as datetime2(7))",
+                    DATETIME_TEST_STR
+                ))
+                .for_each(|row| {
+                    assert_eq!(
+                        row.get::<_, NaiveDateTime>(0),
+                        NaiveDateTime::parse_from_str(DATETIME_TEST_STR, "%Y-%m-%d %H:%M:%S%.3f")
+                            .unwrap()
+                    );
+                    Ok(())
+                })
+            });
             current_thread::block_on_all(future).unwrap();
         }
     }
@@ -318,12 +318,12 @@ mod chrono {
 
 #[cfg(test)]
 mod tests {
+    use super::{Date, DateTime, DateTime2, SmallDateTime, Time};
     use futures::Future;
     use futures_state_stream::StateStream;
-    use tokio::executor::current_thread;
-    use super::{Date, DateTime, DateTime2, SmallDateTime, Time};
-    use SqlConnection;
     use tests::connection_string;
+    use tokio::executor::current_thread;
+    use SqlConnection;
 
     test_timedatatype!(
         test_datetime: DateTime = DateTime {
@@ -342,22 +342,21 @@ mod tests {
     #[test]
     fn test_datetime_fixed() {
         let future = SqlConnection::connect(connection_string().as_ref())
-            .and_then(|conn| {
-                conn.simple_exec("create table #Temp(gg datetime NOT NULL)")
-            })
+            .and_then(|conn| conn.simple_exec("create table #Temp(gg datetime NOT NULL)"))
             .and_then(|(_, conn)| {
                 conn.simple_query(
                     "insert into #Temp(gg) OUTPUT Inserted.gg VALUES('2014-02-24T18:42:23.000')",
-                ).for_each(|row| {
-                        assert_eq!(
-                            row.get::<_, DateTime>(0),
-                            DateTime {
-                                days: 41692,                                         //24.02.2014
-                                seconds_fragments: (18 * 3600 + 42 * 60 + 23) * 300, // 18:42:23
-                            }
-                        );
-                        Ok(())
-                    })
+                )
+                .for_each(|row| {
+                    assert_eq!(
+                        row.get::<_, DateTime>(0),
+                        DateTime {
+                            days: 41692,                                         //24.02.2014
+                            seconds_fragments: (18 * 3600 + 42 * 60 + 23) * 300, // 18:42:23
+                        }
+                    );
+                    Ok(())
+                })
             });
         current_thread::block_on_all(future).unwrap();
     }

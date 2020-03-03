@@ -1,12 +1,12 @@
 //! protocol abstraction, mostly type definitions (meta)
+use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
+use futures::Sink;
 use std::borrow::Cow;
 use std::cmp;
 use std::io::{self, Cursor, Write};
 use std::mem;
-use futures::Sink;
-use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use transport::{Io, TdsTransport, TdsTransportInner};
-use {FromUint, Error, Result, DRIVER_VERSION};
+use {Error, FromUint, Result, DRIVER_VERSION};
 
 /// The amount of bytes a packet header consists of
 pub const HEADER_BYTES: usize = 8;
@@ -114,7 +114,6 @@ impl PacketHeader {
         })
     }
 }
-
 
 uint_enum! {
     #[repr(u32)]
@@ -247,7 +246,7 @@ impl<'a> UnserializeMessage<PreloginMessage> for &'a [u8] {
                 1 => {
                     let encrypt = cursor.read_u8()?;
                     ret.encryption = EncryptionLevel::from_u8(encrypt).ok_or(Error::Protocol(
-                        format!("invalid encryption value: {}", encrypt).into()
+                        format!("invalid encryption value: {}", encrypt).into(),
                     ))?;
                 }
                 3 => debug_assert_eq!(length, 0), // threadid
@@ -259,7 +258,6 @@ impl<'a> UnserializeMessage<PreloginMessage> for &'a [u8] {
         Ok(ret)
     }
 }
-
 
 bitflags! {
     pub struct LoginOptionFlags1: u8 {
@@ -435,7 +433,7 @@ impl<'a> SerializeMessage for LoginMessage<'a> {
 
         let mut data_offset = cursor.position() as usize + var_data.len() * 2 * 2 + 6;
 
-        for (i, value) in var_data.into_iter().enumerate() {
+        for (i, value) in var_data.iter().enumerate() {
             // write the client ID (created from the MAC address)
             if i == 9 {
                 cursor.write_u32::<LittleEndian>(0)?; //TODO:
@@ -556,7 +554,7 @@ pub fn write_sql_batch<I: Io>(trans: &mut TdsTransport<I>, query: &str) -> io::R
     for byte in query.encode_utf16() {
         writer.write_u16::<LittleEndian>(byte)?;
     }
-    
+
     writer.finalize()?;
     Ok(())
 }

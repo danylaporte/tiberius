@@ -80,7 +80,7 @@ impl ReadTyState {
                         ReadTyMode::Plp => input.read_u32::<LittleEndian>()? as usize,
                     };
                     if chunk_size == 0 {
-                        break // found a sentinel, we're done
+                        break; // found a sentinel, we're done
                     } else {
                         self.chunk_data_left = chunk_size
                     }
@@ -97,7 +97,6 @@ impl ReadTyState {
         Ok(Async::Ready(self.data.take()))
     }
 }
-
 
 pub struct PLPChunkWriter<W: Write> {
     pub target: W,
@@ -135,7 +134,8 @@ impl<W: Write> io::Write for PLPChunkWriter<W> {
 
     fn flush(&mut self) -> io::Result<()> {
         if !self.buf.is_empty() {
-            self.target.write_u32::<LittleEndian>(self.buf.len() as u32)?;
+            self.target
+                .write_u32::<LittleEndian>(self.buf.len() as u32)?;
             self.target.write_all(&self.buf)?;
             self.buf.truncate(0);
         }
